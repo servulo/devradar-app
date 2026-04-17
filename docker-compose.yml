@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: devradar-postgres
+    environment:
+      POSTGRES_USER: devradar
+      POSTGRES_PASSWORD: devradar123
+      POSTGRES_DB: devradardb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
