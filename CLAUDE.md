@@ -2,77 +2,88 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Repository structure
+## Project Overview
 
-```
-devradar-app/
-├── devradar-backend/   # NestJS API
-├── infra/              # Terraform (Azure)
-└── docker-compose.yml  # Local PostgreSQL
-```
+**DevRadar** is a full-stack weather search application with search history tracking. It has two main sub-projects:
 
-## Backend — devradar-backend
+- `devradar-frontend/` — Angular 21.2 SPA (standalone components, no NgModules)
+- `devradar-backend/` — NestJS 11 REST API backed by PostgreSQL
 
-### Commands (run from `devradar-backend/`)
+## Local Development Setup
 
+Start PostgreSQL via Docker Compose (required before running the backend):
 ```bash
-npm run start:dev     # dev server with watch
-npm run build         # compile to dist/
-npm run start:prod    # run compiled output
-npm run test          # unit tests
-npm run test:cov      # with coverage report
-npm run test:e2e      # end-to-end tests
-npm run lint          # eslint --fix
-npm run format        # prettier --write
+docker-compose up -d
 ```
 
-Run a single test file:
+**Backend** (NestJS on port 3000):
 ```bash
-npx jest src/weather/weather.service.spec.ts
+cd devradar-backend
+npm install
+npm run start:dev
 ```
+Swagger docs available at http://localhost:3000/api
 
-### Local database
-
+**Frontend** (Angular on port 4200, proxies to backend at http://localhost:3000):
 ```bash
-docker compose up -d   # starts PostgreSQL on localhost:5432
+cd devradar-frontend
+npm install
+npm start
 ```
 
-Copy `devradar-backend/.env` and set the required variables (DB credentials, `WEATHER_API_KEY`, `WEATHER_API_URL`). TypeORM runs with `synchronize: true`, so schema migrations are automatic in dev.
+## Common Commands
 
-### Architecture
-
-The app has two NestJS modules:
-
-**WeatherModule** — `GET /weather?city=<name>`
-- Calls the OpenWeatherMap API (`WEATHER_API_URL/weather`) with `units=metric&lang=pt_br`.
-- Results are cached via `@nestjs/cache-manager` (TTL 60s, key `weather:<city_lowercase>`).
-- On a cache miss, the result is persisted to `search_history` via `HistoryService` before returning.
-
-**HistoryModule** — `GET /history?page=&limit=` / `DELETE /history/:id`
-- Stores every unique weather fetch in the `search_history` table (TypeORM entity).
-- `findAll` returns paginated results ordered by `searchedAt DESC`.
-
-`ValidationPipe({ transform: true })` is global. Swagger docs are served at `/api`.
-
-`WEATHER_API_KEY` is intentionally absent from `container_apps.tf` — it must be injected as a secret manually or via CI when deploying to Azure Container Apps.
-
-## Infra — infra/ (Terraform + Azure)
-
-### Commands (run from `infra/`)
-
+### Frontend (`devradar-frontend/`)
 ```bash
-terraform init
-terraform plan -var="postgres_admin_password=<pwd>"
-terraform apply -var="postgres_admin_password=<pwd>"
+npm start           # dev server (ng serve)
+npm run build       # production build → dist/
+npm run watch       # dev build in watch mode
+npm run test        # Vitest unit tests
 ```
 
-`postgres_admin_password` is the only required variable without a default; all other variables have defaults in `variables.tf`.
+### Backend (`devradar-backend/`)
+```bash
+npm run start:dev   # watch mode (development)
+npm run build       # compile TypeScript → dist/
+npm run start:prod  # run compiled production build
+npm run test        # Jest unit tests
+npm run test:e2e    # end-to-end tests
+npm run test:cov    # coverage report
+npm run lint        # ESLint with auto-fix
+npm run format      # Prettier formatting
+```
 
-### What it provisions (Azure, region `brazilsouth`)
+## Architecture
 
-- **Resource group** `sprj-rg-devradar`
-- **Azure Container App** (`sprj-ca-devradar-backend`) pulling from an existing shared ACR (`sprjacrshared` in `sprj-rg-shared`)
-- **PostgreSQL Flexible Server** v16 (`B_Standard_B1ms`, 32 GB) with database `devradardb`
-- **Log Analytics Workspace** + Container App Environment
+### Backend (NestJS)
 
-The Container App reads DB credentials from Terraform outputs and exposes port 3000 externally. The backend image must be pushed to the shared ACR before `terraform apply`.
+Feature modules under `src/`:
+
+- **`weather/`** — `GET /weather?city=<name>` — calls OpenWeatherMap API, caches result 60s, saves to history DB
+- **`history/`** — `GET /history?page=&limit=` and `DELETE /history/:id` — paginated search history backed by `search_history` PostgreSQL table
+
+Key patterns:
+- Input validation via DTOs + `class-validator` (global `ValidationPipe`)
+- Global in-memory cache (`@nestjs/cache-manager`, 60s TTL) checked before hitting external API
+- TypeORM with `synchronize: true` (schema auto-sync in all environments)
+- All config via env vars loaded by `@nestjs/config` from `.env`
+
+Required env vars (see `devradar-backend/.env`):
+```
+DB_HOST, DB_PORT, DB_USERNAME, DB_PASSWORD, DB_DATABASE
+PORT
+WEATHER_API_KEY, WEATHER_API_URL
+```
+
+### Frontend (Angular)
+
+- Standalone bootstrap: `bootstrapApplication(App, appConfig)` in `main.ts`
+- `appConfig` provides `provideRouter(routes)` and `provideHttpClient()`
+- Environment switching: `environment.development.ts` (localhost:3000) vs `environment.ts` (Azure URL) — Angular CLI handles the file replacement on build
+- Routes are defined in `src/app/app.routes.ts` (currently empty — ready for feature development)
+
+### Infrastructure
+
+- `docker-compose.yml` — PostgreSQL 16 only (backend runs on host during dev)
+- `devradar-backend/Dockerfile` — multi-stage Node 20-alpine build for production
+- Production target: Azure Container Apps (URL in `environment.ts`)
