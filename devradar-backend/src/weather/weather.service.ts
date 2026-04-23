@@ -55,8 +55,15 @@ export class WeatherService {
 
       return weather;
     } catch (error) {
-      if (error.response?.status === 404) {
+      const status = error.response?.status;
+      if (status === 404) {
         throw new NotFoundException(`Cidade "${city}" não encontrada.`);
+      }
+      if (status === 401) {
+        throw new Error('Chave da API de clima inválida ou não configurada.');
+      }
+      if (status === 429) {
+        throw new Error('Limite de requisições da API de clima atingido.');
       }
       throw error;
     }
